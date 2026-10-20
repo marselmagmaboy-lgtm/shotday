@@ -1,0 +1,15 @@
+[Unit]
+Description=ShotDay bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/shotday/server
+ExecStart=/home/ubuntu/shotday/server/.venv/bin/python -m shotday.bot
+Restart=always
+RestartSec=10
+MemoryMax=350M
+
+[Install]
+WantedBy=multi-user.target
