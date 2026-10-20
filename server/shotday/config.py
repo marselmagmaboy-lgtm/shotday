@@ -17,7 +17,8 @@ class Config:
     bot_token: str = os.environ.get("BOT_TOKEN", "")
     owner_id: int = int(os.environ.get("OWNER_TG_ID", "0"))
     database_url: str = os.environ.get("DATABASE_URL", "")
-    claude_model: str = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+    claude_model: str = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")            # заметки боту
+    claude_scan_model: str = os.environ.get("CLAUDE_SCAN_MODEL", "claude-haiku-5-5")  # сканер чатов
     tz: ZoneInfo = ZoneInfo(os.environ.get("TZ_NAME", "Asia/Tashkent"))
 
     # Напоминания

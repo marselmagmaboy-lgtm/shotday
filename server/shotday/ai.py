@@ -84,7 +84,7 @@ async def parse_note(text: str) -> ShootDraft | None:
 
 async def scan_chat(chat_title: str, transcript: str, known: str) -> list[ChatFinding]:
     resp = await client.messages.parse(
-        model=cfg.claude_model,
+        model=cfg.claude_scan_model,
         max_tokens=8000,
         system=SYSTEM_CHAT,
         messages=[{"role": "user", "content":
