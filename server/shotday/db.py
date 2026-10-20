@@ -1,6 +1,6 @@
 """Доступ к базе. Один пул asyncpg на процесс."""
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import asyncpg
 
@@ -37,27 +37,18 @@ SHOOT_FIELDS = ("title", "client", "client_tg", "starts_at", "duration_min", "lo
 
 
 async def create_shoot(data: dict, source: str) -> asyncpg.Record:
+    """Чек-лист и напоминания создают триггеры в базе (migrations/002_app.sql)."""
     cols = [k for k in SHOOT_FIELDS if data.get(k) is not None]
     args = [data[k] for k in cols] + [source]
     ph = ", ".join(f"${i}" for i in range(1, len(args) + 1))
-    async with (await pool()).acquire() as con, con.transaction():
-        shoot = await con.fetchrow(
-            f"insert into shoots ({', '.join(cols)}, source) values ({ph}) returning *", *args)
-        await _fill_checklist(con, shoot)
-        await _schedule_reminders(con, shoot)
-    return shoot
+    return await fetchrow(f"insert into shoots ({', '.join(cols)}, source) values ({ph}) returning *", *args)
 
 
 async def update_shoot(shoot_id, data: dict) -> asyncpg.Record:
     cols = [k for k in SHOOT_FIELDS if k in data]
     sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(cols, start=2))
-    async with (await pool()).acquire() as con, con.transaction():
-        shoot = await con.fetchrow(
-            f"update shoots set {sets}, updated_at = now() where id = $1 returning *",
-            shoot_id, *[data[k] for k in cols])
-        if "starts_at" in data or "status" in data:
-            await _schedule_reminders(con, shoot)
-    return shoot
+    return await fetchrow(f"update shoots set {sets} where id = $1 returning *",
+                          shoot_id, *[data[k] for k in cols])
 
 
 async def get_shoot(shoot_id):
@@ -74,52 +65,6 @@ async def upcoming_shoots(limit=30):
     return await fetch(
         "select * from shoots where starts_at > now() - interval '1 day' "
         "and status <> 'cancelled' order by starts_at limit $1", limit)
-
-
-async def _fill_checklist(con, shoot):
-    tpl = await con.fetchrow("select gear_ids from gear_templates where kind = $1", shoot["kind"])
-    if tpl is None:
-        tpl = await con.fetchrow("select gear_ids from gear_templates where kind = 'other'")
-    ids = tpl["gear_ids"] if tpl else []
-    items = await con.fetch("select * from gear_items where id = any($1::text[]) order by sort", ids)
-    rows = []
-    for it in items:
-        if it["needs_charge"]:
-            rows.append((shoot["id"], "charge", it["name"], it["sort"]))
-        rows.append((shoot["id"], "pack", it["name"], it["sort"]))
-    await con.executemany(
-        "insert into shoot_checklist (shoot_id, list, label, sort) values ($1, $2, $3, $4)", rows)
-
-
-def reminder_times(starts_at: datetime, now: datetime) -> dict[str, datetime]:
-    """Когда слать каждое напоминание. Прошедшие пропускаем, кроме «зарядить»,
-    которое при поздно созданной съёмке шлём сразу, если до неё ещё есть время."""
-    local = starts_at.astimezone(cfg.tz)
-    eve = (local - timedelta(days=1)).replace(hour=cfg.charge_hour, minute=0, second=0, microsecond=0)
-    times = {
-        "charge": eve,
-        "pack": starts_at - timedelta(hours=cfg.pack_hours),
-        "go": starts_at - timedelta(minutes=cfg.go_minutes),
-    }
-    out = {}
-    for kind, t in times.items():
-        if t > now:
-            out[kind] = t
-        elif kind == "charge" and starts_at - now > timedelta(hours=cfg.pack_hours):
-            out[kind] = now
-        elif kind == "pack" and starts_at - now > timedelta(minutes=cfg.go_minutes):
-            out[kind] = now
-    return out
-
-
-async def _schedule_reminders(con, shoot):
-    await con.execute("delete from reminders where shoot_id = $1 and sent_at is null", shoot["id"])
-    if shoot["status"] in ("cancelled", "shot", "edited", "paid"):
-        return
-    now = datetime.now(cfg.tz)
-    for kind, due in reminder_times(shoot["starts_at"], now).items():
-        await con.execute("insert into reminders (shoot_id, kind, due_at) values ($1, $2, $3)",
-                          shoot["id"], kind, due)
 
 
 # ---------- чек-листы ----------

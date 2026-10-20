@@ -21,10 +21,7 @@ class Config:
     claude_scan_model: str = os.environ.get("CLAUDE_SCAN_MODEL", "claude-haiku-5-5")  # сканер чатов
     tz: ZoneInfo = ZoneInfo(os.environ.get("TZ_NAME", "Asia/Tashkent"))
 
-    # Напоминания
-    charge_hour: int = int(os.environ.get("REMIND_CHARGE_HOUR", "20"))   # накануне вечером
-    pack_hours: float = float(os.environ.get("REMIND_PACK_HOURS", "3"))  # за N часов
-    go_minutes: int = int(os.environ.get("REMIND_GO_MINUTES", "60"))     # «выезжай»
+    # Время напоминаний задаётся в базе: migrations/002_app.sql (shotday_schedule_reminders)
     digest_hour: int = int(os.environ.get("DIGEST_HOUR", "9"))
 
     # Сканер Telegram
