@@ -16,6 +16,7 @@ from .config import cfg
 
 log = logging.getLogger("shotday.scanner")
 MAX_MSGS_PER_CHAT = 200
+MIN_TEXT_CHARS = 20  # «ок», «👍», одни фото — не тратим запрос
 
 
 class ReadOnlyViolation(RuntimeError):
@@ -56,18 +57,26 @@ async def known_shoots() -> tuple[str, set[str]]:
     return text, {str(r["id"]) for r in rows}
 
 
-async def scan_once(client: TelegramClient):
+async def scan_once(client: TelegramClient, prev_pass: datetime | None):
+    """prev_pass — когда начался прошлый проход: диалоги отсортированы по дате, старше него новых нет."""
     since = datetime.now(timezone.utc) - timedelta(days=cfg.scan_first_days)
     known, known_ids = await known_shoots()
     found = 0
     async for dialog in client.iter_dialogs():
         title = dialog.name or ""
+        if prev_pass and dialog.date and dialog.date < prev_pass - timedelta(minutes=10):
+            if dialog.pinned:
+                continue  # закреплённые идут первыми вне порядка дат
+            break
         if not eligible(dialog.entity) or blacklisted(title):
             continue
         last = await db.scan_last_id(dialog.id)
         top = dialog.message.id if dialog.message else 0
         if last is not None and top <= last:
             continue  # новых сообщений нет
+        if last is None and dialog.date and dialog.date < since:
+            await db.scan_save(dialog.id, title, top)  # старый чат: просто запоминаем, откуда читать
+            continue
         msgs = []
         async for m in client.iter_messages(dialog, limit=MAX_MSGS_PER_CHAT, min_id=last or 0):
             if last is None and m.date < since:
@@ -81,7 +90,7 @@ async def scan_once(client: TelegramClient):
                 text = m.message or ("[медиа]" if m.media else "")
                 if text:
                     lines.append(f"[{m.date.astimezone(cfg.tz):%Y-%m-%d %H:%M}] {who}: {text}")
-            if lines:
+            if sum(len(m.message or "") for m in msgs) >= MIN_TEXT_CHARS:
                 try:
                     findings = await ai.scan_chat(title, "\n".join(lines), known)
                 except Exception:
@@ -108,9 +117,12 @@ async def main():
     await client.connect()
     if not await client.is_user_authorized():
         raise SystemExit("Сессия не авторизована: запусти python -m shotday.scanner_login")
+    prev_pass = None
     while True:
+        started = datetime.now(timezone.utc)
         try:
-            await scan_once(client)
+            await scan_once(client, prev_pass)
+            prev_pass = started
         except Exception:
             log.exception("scan failed")
         await asyncio.sleep(cfg.scan_every_min * 60)

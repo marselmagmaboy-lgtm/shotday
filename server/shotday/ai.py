@@ -86,6 +86,7 @@ async def scan_chat(chat_title: str, transcript: str, known: str) -> list[ChatFi
     resp = await client.messages.parse(
         model=cfg.claude_scan_model,
         max_tokens=8000,
+        output_config={"effort": "low"},  # простая задача: меньше «размышлений» — дешевле
         system=SYSTEM_CHAT,
         messages=[{"role": "user", "content":
                    f"{_now_line()}\n\nИзвестные съёмки:\n{known or '(нет)'}\n\n"
