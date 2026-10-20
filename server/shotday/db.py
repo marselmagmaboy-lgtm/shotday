@@ -1,6 +1,8 @@
 """Доступ к базе. Один пул asyncpg на процесс."""
 import json
+import logging
 from datetime import datetime
+from pathlib import Path
 
 import asyncpg
 
@@ -16,6 +18,28 @@ async def pool() -> asyncpg.Pool:
         _pool = await asyncpg.create_pool(cfg.database_url, min_size=1, max_size=4,
                                           statement_cache_size=0)
     return _pool
+
+
+MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
+log = logging.getLogger("shotday.db")
+
+
+async def migrate():
+    """Применяет новые migrations/*.sql по порядку и записывает почту владельца для приложения."""
+    async with (await pool()).acquire() as con:
+        await con.execute("create table if not exists schema_migrations "
+                          "(name text primary key, applied_at timestamptz not null default now())")
+        done = {r["name"] for r in await con.fetch("select name from schema_migrations")}
+        for f in sorted(MIGRATIONS.glob("*.sql")):
+            if f.name in done:
+                continue
+            async with con.transaction():
+                await con.execute(f.read_text())
+                await con.execute("insert into schema_migrations (name) values ($1)", f.name)
+            log.info("migration applied: %s", f.name)
+        if cfg.owner_email:
+            await con.execute("insert into app_config (key, value) values ('owner_email', $1) "
+                              "on conflict (key) do update set value = excluded.value", cfg.owner_email)
 
 
 async def fetch(sql, *args):

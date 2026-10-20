@@ -2,7 +2,8 @@
 -- чтобы съёмки из бота и из Android-приложения работали одинаково,
 -- плюс доступ приложения через Supabase Auth (только владелец) и хранилище фото-референсов.
 --
--- Перед применением: insert into app_config values ('owner_email', '<почта>') on conflict (key) do update set value = excluded.value;
+-- Применяется автоматически при старте бота (db.migrate). Почта владельца берётся из OWNER_EMAIL в .env
+-- (можно несколько через запятую).
 
 create table if not exists app_config (
   key   text primary key,
@@ -94,7 +95,8 @@ create trigger shoots_touch before update on shoots
 create or replace function shotday_is_owner() returns boolean
 language sql stable security definer set search_path = public as $$
   select coalesce(auth.jwt() ->> 'email', '') <> ''
-     and lower(auth.jwt() ->> 'email') = lower((select value from app_config where key = 'owner_email'))
+     and lower(auth.jwt() ->> 'email') = any(
+           string_to_array(replace(lower((select value from app_config where key = 'owner_email')), ' ', ''), ','))
 $$;
 
 do $$
@@ -110,11 +112,16 @@ begin
 end $$;
 
 -- ---------- фото-референсы ----------
+-- storage.objects принадлежит служебной роли Supabase; если прав не хватит, остальная миграция всё равно применится.
 
-insert into storage.buckets (id, name, public) values ('refs', 'refs', false)
-on conflict (id) do nothing;
-
-drop policy if exists shotday_refs_owner on storage.objects;
-create policy shotday_refs_owner on storage.objects for all to authenticated
-  using (bucket_id = 'refs' and shotday_is_owner())
-  with check (bucket_id = 'refs' and shotday_is_owner());
+do $$
+begin
+  insert into storage.buckets (id, name, public) values ('refs', 'refs', false)
+  on conflict (id) do nothing;
+  drop policy if exists shotday_refs_owner on storage.objects;
+  create policy shotday_refs_owner on storage.objects for all to authenticated
+    using (bucket_id = 'refs' and shotday_is_owner())
+    with check (bucket_id = 'refs' and shotday_is_owner());
+exception when others then
+  raise warning 'storage setup skipped: %', sqlerrm;
+end $$;

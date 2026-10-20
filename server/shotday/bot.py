@@ -313,7 +313,7 @@ async def digest_loop():
 
 async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    await db.pool()
+    await db.migrate()
     for coro in (reminders_loop(), suggestions_loop(), digest_loop()):
         asyncio.create_task(coro)
     await dp.start_polling(bot)
